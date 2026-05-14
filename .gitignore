@@ -22,3 +22,18 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# WhatsApp Session & Cache
+.wwebjs_auth/
+.wwebjs_cache/
+**/.wwebjs_auth/
+**/.wwebjs_cache/
+*.html
+
+# Executáveis e Binários
+*.exe
+src-tauri/binaries/*
+src-tauri/test.exe
+
+# Tauri Build Target
+src-tauri/target/
