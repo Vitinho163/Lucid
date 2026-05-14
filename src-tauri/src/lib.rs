@@ -16,12 +16,23 @@ fn set_ghost_mode(enable: bool, state: tauri::State<'_, Arc<Mutex<OverlayState>>
     app_handle.emit("overlay-mode-changed", enable).unwrap();
 }
 
+#[tauri::command]
+fn send_to_sidecar(payload: String, state: tauri::State<'_, SidecarState>) -> Result<(), String> {
+    if let Some(child) = state.0.lock().unwrap().as_mut() {
+        let msg = format!("{}\n", payload);
+        let _ = child.write(msg.as_bytes()).map_err(|e| e.to_string())?;
+        Ok(())
+    } else {
+        Err("Sidecar not running".to_string())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![set_ghost_mode])
+        .invoke_handler(tauri::generate_handler![set_ghost_mode, send_to_sidecar])
         .manage(Arc::new(Mutex::new(OverlayState { pass_through: false })))
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
@@ -70,6 +81,7 @@ pub fn run() {
                 while let Some(event) = rx.recv().await {
                     if let CommandEvent::Stdout(line) = event {
                         let text = String::from_utf8_lossy(&line);
+                        println!("SIDECAR LOG: {}", text);
                         if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&text) {
                             if let Some(msg_type) = msg["type"].as_str() {
                                 match msg_type {
@@ -78,6 +90,21 @@ pub fn run() {
                                     }
                                     "ready" => {
                                         app_handle.emit("whatsapp-ready", "").unwrap();
+                                    }
+                                    "disconnected" => {
+                                        app_handle.emit("whatsapp-disconnected", msg["data"].as_str().unwrap_or("")).unwrap();
+                                    }
+                                    "chats" => {
+                                        app_handle.emit("whatsapp-chats", &msg["data"]).unwrap();
+                                    }
+                                    "messages" => {
+                                        app_handle.emit("whatsapp-messages", &msg).unwrap();
+                                    }
+                                    "message_sent" => {
+                                        app_handle.emit("whatsapp-message-sent", &msg["data"]).unwrap();
+                                    }
+                                    "incoming_message" => {
+                                        app_handle.emit("whatsapp-incoming-message", &msg["data"]).unwrap();
                                     }
                                     _ => {}
                                 }
