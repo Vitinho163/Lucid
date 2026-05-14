@@ -27,12 +27,17 @@ fn send_to_sidecar(payload: String, state: tauri::State<'_, SidecarState>) -> Re
     }
 }
 
+#[tauri::command]
+fn exit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![set_ghost_mode, send_to_sidecar])
+        .invoke_handler(tauri::generate_handler![set_ghost_mode, send_to_sidecar, exit_app])
         .manage(Arc::new(Mutex::new(OverlayState { pass_through: false })))
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
@@ -105,6 +110,9 @@ pub fn run() {
                                     }
                                     "incoming_message" => {
                                         app_handle.emit("whatsapp-incoming-message", &msg["data"]).unwrap();
+                                    }
+                                    "message_ack" => {
+                                        app_handle.emit("whatsapp-message-ack", &msg["data"]).unwrap();
                                     }
                                     _ => {}
                                 }

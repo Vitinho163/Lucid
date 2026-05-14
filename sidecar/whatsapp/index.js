@@ -43,17 +43,14 @@ async function reinitialize(wipe = false) {
         monitorInterval = null;
     }
 
-    // Give stdout a tiny moment to flush before tearing down the browser
     await new Promise(r => setTimeout(r, 100));
 
-    // 1. Hard-kill the headless Chrome process to instantly drop file locks
     try {
         if (client && client.pupBrowser && client.pupBrowser.process()) {
             client.pupBrowser.process().kill('SIGKILL');
         }
     } catch (_) {}
 
-    // 2. Await destroy with a strict 2-second timeout to prevent deadlocks
     try {
         await Promise.race([
             client.destroy(),
@@ -61,7 +58,6 @@ async function reinitialize(wipe = false) {
         ]);
     } catch (_) {}
 
-    // 3. Now that the process is dead, the file locks are gone, so we can wipe
     if (wipe) wipeAuthFolder();
     
     setTimeout(() => {
@@ -142,6 +138,8 @@ function attachEvents() {
     });
 
     const processIncomingMessage = async (msg) => {
+        if (msg.from === 'status@broadcast' || msg.to === 'status@broadcast') return null;
+
         let mediaData = null;
         if (msg.hasMedia && (msg.type === 'image' || msg.type === 'sticker')) {
             try {
@@ -163,17 +161,33 @@ function attachEvents() {
     client.on('message', async (msg) => {
         if (!isClientReady) return;
         const data = await processIncomingMessage(msg);
-        console.log(JSON.stringify({ type: 'incoming_message', data }));
+        if (data) console.log(JSON.stringify({ type: 'incoming_message', data }));
     });
 
     client.on('message_create', async (msg) => {
         if (!isClientReady || !msg.fromMe) return;
         const data = await processIncomingMessage(msg);
-        console.log(JSON.stringify({ type: 'incoming_message', data }));
+        if (data) console.log(JSON.stringify({ type: 'incoming_message', data }));
+    });
+
+    client.on('message_ack', (msg, ack) => {
+        if (!isClientReady) return;
+        console.log(JSON.stringify({ type: 'message_ack', data: { id: msg.id.id, ack } }));
     });
 }
 
 process.stdin.setEncoding('utf8');
+
+['end', 'close', 'error'].forEach(event => {
+    process.stdin.on(event, async () => {
+        console.log(JSON.stringify({ type: 'error', data: `Stdin ${event}, shutting down.` }));
+        if (client) {
+            try { await client.destroy(); } catch (e) {}
+        }
+        process.exit(0);
+    });
+});
+
 process.stdin.on('data', async (data) => {
     if (!isClientReady || !client) return;
     const lines = data.split('\n');
@@ -197,7 +211,7 @@ process.stdin.on('data', async (data) => {
 
             if (cmd.action === 'get_chats') {
                 const allChats = await retryEval(() => client.getChats());
-                const topChats = allChats.slice(0, 30); // Limit to top 30 to keep it fast
+                const topChats = allChats.slice(0, 15);
                 const simpleChats = await Promise.all(topChats.map(async c => {
                     let picUrl = null;
                     try { picUrl = await retryEval(() => client.getProfilePicUrl(c.id._serialized), 1); } catch (e) {}
@@ -226,7 +240,8 @@ process.stdin.on('data', async (data) => {
                         fromMe: m.fromMe || false, 
                         timestamp: m.timestamp || Date.now() / 1000,
                         type: m.type,
-                        mediaData
+                        mediaData,
+                        ack: m.ack || 0
                     };
                 }));
                 console.log(JSON.stringify({ type: 'messages', chatId: cmd.chatId, data: simpleMsgs }));
@@ -240,7 +255,8 @@ process.stdin.on('data', async (data) => {
                         fromMe: true, 
                         timestamp: sent.timestamp || Date.now() / 1000, 
                         chatId: cmd.chatId,
-                        type: 'chat'
+                        type: 'chat',
+                        ack: 1
                     } 
                 }));
             }

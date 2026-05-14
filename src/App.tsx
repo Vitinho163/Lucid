@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import QRCode from "react-qr-code";
-import { GripVertical, Scaling, MessageSquare, ArrowLeft, Send } from "lucide-react";
+import { GripVertical, Scaling, MessageSquare, ArrowLeft, Send, X, Check, CheckCheck } from "lucide-react";
 import "./App.css";
 
 interface Chat {
@@ -21,6 +21,7 @@ interface Message {
   chatId?: string;
   type?: string;
   mediaData?: string;
+  ack?: number;
 }
 
 function App() {
@@ -31,17 +32,37 @@ function App() {
 
   const [chats, setChats] = useState<Chat[]>([]);
   const [activeChat, setActiveChat] = useState<Chat | null>(null);
+  const activeChatRef = useRef<Chat | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
+  const [showGhostInput, setShowGhostInput] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    activeChatRef.current = activeChat;
+  }, [activeChat]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
   useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (passThrough && e.shiftKey && e.key === 'Enter') {
+        e.preventDefault();
+        setShowGhostInput(true);
+        setTimeout(() => inputRef.current?.focus(), 50);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [passThrough]);
+
+  useEffect(() => {
     const unlistenMode = listen<boolean>("overlay-mode-changed", (event) => {
       setPassThrough(event.payload);
+      setShowGhostInput(false);
     });
 
     const unlistenQr = listen<string>("whatsapp-qr", (event) => {
@@ -76,7 +97,7 @@ function App() {
     });
 
     const unlistenMessages = listen<any>("whatsapp-messages", (event) => {
-      if (activeChat && event.payload.chatId === activeChat.id) {
+      if (activeChatRef.current && event.payload.chatId === activeChatRef.current.id) {
         setMessages(event.payload.data);
       }
     });
@@ -86,18 +107,25 @@ function App() {
         if (prev.some(m => m.id === event.payload.id)) return prev;
         return [...prev, event.payload];
       });
+      setShowGhostInput(false);
     });
 
     const unlistenIncomingMessage = listen<Message>("whatsapp-incoming-message", (event) => {
       const msg = event.payload;
-      setMessages((prev) => {
-        if (prev.some(m => m.id === msg.id)) return prev;
-        return [...prev, msg];
-      });
       
-      if (!activeChat || msg.chatId !== activeChat.id) {
-        invoke("send_to_sidecar", { payload: JSON.stringify({ action: "get_chats" }) });
+      if (activeChatRef.current && msg.chatId === activeChatRef.current.id) {
+        setMessages((prev) => {
+          if (prev.some(m => m.id === msg.id)) return prev;
+          return [...prev, msg];
+        });
       }
+      
+      invoke("send_to_sidecar", { payload: JSON.stringify({ action: "get_chats" }) });
+    });
+
+    const unlistenMessageAck = listen<{ id: string, ack: number }>("whatsapp-message-ack", (event) => {
+      const { id, ack } = event.payload;
+      setMessages((prev) => prev.map(m => m.id === id ? { ...m, ack } : m));
     });
 
     return () => {
@@ -110,8 +138,9 @@ function App() {
       unlistenMessages.then((f) => f());
       unlistenMessageSent.then((f) => f());
       unlistenIncomingMessage.then((f) => f());
+      unlistenMessageAck.then((f) => f());
     };
-  }, [activeChat]);
+  }, []);
 
   const toggleGhostMode = () => {
     invoke("set_ghost_mode", { enable: true });
@@ -135,6 +164,7 @@ function App() {
       payload: JSON.stringify({ action: "send_message", chatId: activeChat.id, text: inputText.trim() }) 
     });
     setInputText("");
+    setShowGhostInput(false);
   };
 
   return (
@@ -150,21 +180,30 @@ function App() {
           </div>
         )}
 
-        {isReady && !passThrough && (
-          <div className="absolute top-4 right-4 z-50">
+        {!passThrough && (
+          <div className="absolute top-4 right-4 z-50 flex items-center gap-2">
+            {isReady && (
+              <button 
+                onClick={toggleGhostMode}
+                className="p-1 rounded-md hover:bg-white/10 transition-colors text-white/50 hover:text-white"
+                title="Enter Ghost Mode"
+              >
+                <MessageSquare size={20} />
+              </button>
+            )}
             <button 
-              onClick={toggleGhostMode}
-              className="p-1 rounded-md hover:bg-white/10 transition-colors text-white/50 hover:text-white"
-              title="Enter Ghost Mode"
+              onClick={() => invoke("exit_app")}
+              className="p-1 rounded-md hover:bg-red-500/20 transition-colors text-white/50 hover:text-red-400"
+              title="Close App"
             >
-              <MessageSquare size={20} />
+              <X size={20} />
             </button>
           </div>
         )}
 
         <div className={`flex flex-col w-full h-full ${isReady ? 'p-4 pt-12 pb-12' : 'items-center justify-center px-8'}`}>
           {!isReady && (
-            <h1 className="text-xl font-medium tracking-widest text-white/90 uppercase mb-4">
+            <h1 className="text-xl font-medium tracking-widest text-white/90 uppercase mb-4 mt-8">
               Lucid
             </h1>
           )}
@@ -206,52 +245,70 @@ function App() {
                   )}
                 </div>
               ) : (
-                <div className="flex flex-col h-full">
-                  <div className="flex items-center gap-3 pb-3 border-b border-white/10 mb-3">
-                    <button onClick={closeChat} className="text-white/50 hover:text-white transition">
-                      <ArrowLeft size={18} />
-                    </button>
-                    {activeChat.picUrl ? (
-                      <img src={activeChat.picUrl} alt="" className="w-8 h-8 rounded-full object-cover" />
-                    ) : (
-                      <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-white/50 text-xs font-semibold">
-                        {activeChat.name.charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                    <span className="font-semibold text-sm truncate text-white/90">{activeChat.name}</span>
-                  </div>
+                <div className="flex flex-col h-full relative">
+                  {!passThrough && (
+                    <div className="flex items-center gap-3 pb-3 border-b border-white/10 mb-3">
+                      <button onClick={closeChat} className="text-white/50 hover:text-white transition">
+                        <ArrowLeft size={18} />
+                      </button>
+                      {activeChat.picUrl ? (
+                        <img src={activeChat.picUrl} alt="" className="w-8 h-8 rounded-full object-cover" />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-white/50 text-xs font-semibold">
+                          {activeChat.name.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <span className="font-semibold text-sm truncate text-white/90">{activeChat.name}</span>
+                    </div>
+                  )}
                   
-                  <div className="flex-1 overflow-y-auto flex flex-col gap-2 scrollbar-thin scrollbar-thumb-white/10 pr-2">
+                  <div className={`flex-1 overflow-y-auto flex flex-col gap-2 scrollbar-thin scrollbar-thumb-white/10 pr-2 ${passThrough ? 'pb-2' : ''}`}>
                     {messages.map((msg, i) => (
                       <div key={msg.id || i} className={`max-w-[85%] px-3 py-2 text-sm rounded-xl border flex flex-col gap-1 ${msg.fromMe ? 'bg-emerald-500/10 border-emerald-500/20 text-white/90 self-end rounded-tr-sm' : 'bg-white/5 border-white/10 text-white/80 self-start rounded-tl-sm'}`}>
                         {msg.mediaData && (
-                          <img src={msg.mediaData} alt="media" className="max-w-full rounded-lg object-contain" style={{ maxHeight: '200px' }} />
+                          <img src={msg.mediaData} alt="media" className="max-w-full rounded-lg object-contain pointer-events-auto" style={{ maxHeight: '200px' }} />
                         )}
                         {msg.body && <span>{msg.body}</span>}
                         {msg.type === 'sticker' && !msg.mediaData && <span className="italic text-white/40">[Sticker]</span>}
                         {msg.type === 'image' && !msg.mediaData && <span className="italic text-white/40">[Image]</span>}
+                        
+                        {msg.fromMe && (
+                          <div className="self-end mt-0.5 flex items-center">
+                            {(msg.ack === undefined || msg.ack === 0) && <span className="text-[10px] text-white/30 italic">Sending...</span>}
+                            {msg.ack === 1 && <Check size={12} className="text-white/50" />}
+                            {msg.ack === 2 && <CheckCheck size={12} className="text-white/50" />}
+                            {(msg.ack !== undefined && msg.ack >= 3) && <CheckCheck size={12} className="text-blue-400" />}
+                          </div>
+                        )}
                       </div>
                     ))}
                     <div ref={messagesEndRef} />
                   </div>
 
-                  <div className="mt-3 flex gap-2">
-                    <input 
-                      type="text" 
-                      value={inputText}
-                      onChange={(e) => setInputText(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                      placeholder="Type a message..."
-                      className="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm text-white/90 focus:outline-none focus:border-white/30 transition placeholder-white/30"
-                    />
-                    <button 
-                      onClick={sendMessage}
-                      disabled={!inputText.trim()}
-                      className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 w-10 h-10 rounded-lg flex items-center justify-center hover:bg-emerald-500/20 disabled:opacity-50 transition"
-                    >
-                      <Send size={16} />
-                    </button>
-                  </div>
+                  {(!passThrough || showGhostInput) && (
+                    <div className="mt-3 flex gap-2 relative z-50 pointer-events-auto">
+                      <input 
+                        ref={inputRef}
+                        type="text" 
+                        value={inputText}
+                        onChange={(e) => setInputText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') sendMessage();
+                          if (e.key === 'Escape' && passThrough) setShowGhostInput(false);
+                        }}
+                        onBlur={() => passThrough && setShowGhostInput(false)}
+                        placeholder="Type a message..."
+                        className="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm text-white/90 focus:outline-none focus:border-white/30 transition placeholder-white/30 backdrop-blur-lg"
+                      />
+                      <button 
+                        onClick={sendMessage}
+                        disabled={!inputText.trim()}
+                        className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 w-10 h-10 rounded-lg flex items-center justify-center hover:bg-emerald-500/20 disabled:opacity-50 transition"
+                      >
+                        <Send size={16} />
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
