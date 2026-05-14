@@ -1,0 +1,42 @@
+name: Build and Release Lucid
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Frontend Dependencies
+        run: npm install
+
+      - name: Build Node.js Sidecar
+        run: |
+          cd sidecar/whatsapp
+          npm install
+          npx pkg . --target node18-win-x64 --output ../../src-tauri/binaries/whatsapp-sidecar-x86_64-pc-windows-msvc.exe
+
+      - name: Build Tauri App
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: app-v__VERSION__
+          releaseName: 'Lucid v__VERSION__'
+          releaseBody: 'Instalador oficial do Lucid'
+          releaseDraft: false
+          prerelease: false
