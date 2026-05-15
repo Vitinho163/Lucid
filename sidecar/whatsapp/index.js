@@ -22,6 +22,7 @@ function createClient() {
     return new Client({
         authStrategy: new LocalAuth({ dataPath: authPath }),
         puppeteer: {
+            executablePath: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
             headless: true,
             args: [
                 '--no-sandbox', 

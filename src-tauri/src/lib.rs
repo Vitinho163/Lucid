@@ -13,6 +13,18 @@ fn set_ghost_mode(enable: bool, state: tauri::State<'_, Arc<Mutex<OverlayState>>
     let mut lock = state.lock().unwrap();
     lock.pass_through = enable;
     window.set_ignore_cursor_events(enable).unwrap();
+    
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+        let shortcut_enter = Shortcut::new(Some(Modifiers::SHIFT), Code::Enter);
+        if enable {
+            let _ = app_handle.global_shortcut().register(shortcut_enter);
+        } else {
+            let _ = app_handle.global_shortcut().unregister(shortcut_enter);
+        }
+    }
+    
     app_handle.emit("overlay-mode-changed", enable).unwrap();
 }
 
@@ -47,26 +59,39 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 use tauri_plugin_global_shortcut::GlobalShortcutExt;
-                let shortcut = Shortcut::new(Some(Modifiers::ALT | Modifiers::SHIFT), Code::KeyZ);
+                let shortcut_z = Shortcut::new(Some(Modifiers::ALT | Modifiers::SHIFT), Code::KeyZ);
+                let shortcut_enter = Shortcut::new(Some(Modifiers::SHIFT), Code::Enter);
+                
                 app.handle().plugin(
                     tauri_plugin_global_shortcut::Builder::new()
                         .with_handler(move |app, shortcut_pressed, event| {
-                            if shortcut_pressed == &shortcut && event.state() == ShortcutState::Pressed {
-                                let window = app.get_webview_window("main").unwrap();
-                                let state = app.state::<Arc<Mutex<OverlayState>>>();
-                                let mut lock = state.lock().unwrap();
+                            if event.state() == ShortcutState::Pressed {
+                                if shortcut_pressed == &shortcut_z {
+                                    let window = app.get_webview_window("main").unwrap();
+                                    let state = app.state::<Arc<Mutex<OverlayState>>>();
+                                    let mut lock = state.lock().unwrap();
 
-                                lock.pass_through = false;
-                                window
-                                    .set_ignore_cursor_events(false)
-                                    .expect("failed to toggle cursor events");
+                                    lock.pass_through = false;
+                                    window
+                                        .set_ignore_cursor_events(false)
+                                        .expect("failed to toggle cursor events");
 
-                                app.emit("overlay-mode-changed", false).unwrap();
+                                    // Disable ghost mode
+                                    app.emit("overlay-mode-changed", false).unwrap();
+                                    
+                                    // Also unregister the Shift+Enter shortcut since ghost mode is off
+                                    let _ = app.global_shortcut().unregister(shortcut_enter);
+                                } else if shortcut_pressed == &shortcut_enter {
+                                    // Triggered Shift+Enter while in Ghost Mode
+                                    let window = app.get_webview_window("main").unwrap();
+                                    window.set_focus().unwrap(); // Bring window to front so input works
+                                    app.emit("overlay-focus-input", ()).unwrap();
+                                }
                             }
                         })
                         .build(),
                 )?;
-                app.global_shortcut().register(shortcut)?;
+                app.global_shortcut().register(shortcut_z)?;
             }
 
             let app_data_dir = app.path().app_data_dir().unwrap();

@@ -48,15 +48,16 @@ function App() {
   }, [messages]);
 
   useEffect(() => {
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (passThrough && e.shiftKey && e.key === 'Enter') {
-        e.preventDefault();
+    const unlistenFocusInput = listen("overlay-focus-input", () => {
+      if (passThrough) {
         setShowGhostInput(true);
         setTimeout(() => inputRef.current?.focus(), 50);
       }
+    });
+    
+    return () => {
+      unlistenFocusInput.then(f => f());
     };
-    window.addEventListener('keydown', handleGlobalKeyDown);
-    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [passThrough]);
 
   useEffect(() => {
