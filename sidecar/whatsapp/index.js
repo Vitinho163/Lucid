@@ -1,8 +1,9 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
-const appDataPath = process.argv[2];
+const appDataPath = path.join(os.homedir(), 'AppData', 'Local', 'Lucid')
 
 if (!appDataPath) {
     console.log(JSON.stringify({ type: 'error', data: 'No AppData path provided' }));
@@ -22,7 +23,16 @@ function createClient() {
         authStrategy: new LocalAuth({ dataPath: authPath }),
         puppeteer: {
             headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+            args: [
+                '--no-sandbox', 
+                '--disable-setuid-sandbox', 
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--no-zygote',
+                '--single-process',
+                '--disable-gpu'
+            ],
             protocolTimeout: 0 // Prevent Runtime.callFunctionOn timeouts
         }
     });
